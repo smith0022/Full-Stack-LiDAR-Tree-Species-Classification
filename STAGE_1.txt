@@ -1,0 +1,84 @@
+STAGE 1 DOCUMENTATION - LiDAR Point Cloud Summary
+=================================================
+
+Goal
+-----
+Read a .las / .laz LiDAR point cloud file (Boreal forest example) and output:
+1. Total number of points
+2. Coordinate ranges (min/max for X, Y, Z)
+3. Point counts by classification (semantic_id if present, otherwise ASPRS classification)
+
+Script
+------
+File: backend/stage_1.py
+Core function: analyze_boreal3d_uls_data(file_path)
+
+Key Behaviors
+-------------
+- Validates the file path exists.
+- Uses laspy.open() to read header metadata and point data.
+- Extracts scaled coordinates (x, y, z) directly from the LAS/LAZ file.
+- Chooses classification attribute priority:
+  semantic_id (custom dataset field) -> fallback to standard classification.
+- Counts occurrences using numpy.unique.
+- Provides friendly error if LAZ backend missing ("No LazBackend selected") and suggests pip/conda install commands.
+
+Dependencies
+------------
+Primary: laspy, numpy
+If reading compressed .laz files you MUST install a backend:
+  pip install "laspy[lazrs,laszip]"
+Or (conda):
+  conda install -c conda-forge laspy lazrs laszip
+
+Usage (Windows PowerShell)
+--------------------------
+1. Create/activate virtual environment (optional but recommended):
+   python -m venv venv
+   venv\Scripts\Activate.ps1
+2. Install dependencies (if not already):
+   pip install "laspy[lazrs,laszip]" numpy
+3. Run:
+   python backend\stage_1.py
+
+Edit the variable laz_file_path near the bottom of stage_1.py or run it via Python shell:
+   python - <<'PY'
+from backend.stage_1 import analyze_boreal3d_uls_data
+analyze_boreal3d_uls_data(r"D:\\Boreal3D\\YourPlot\\ULS.laz")
+PY
+
+Sample Output (structure)
+-------------------------
+--- LiDAR Data Summary for: ULS.laz ---
+Total Number of Points: 385,402
+Coordinate Ranges:
+  X-axis: Min = 123456.123, Max = 123489.456
+  Y-axis: Min = 789012.321, Max = 789045.678
+  Z-axis: Min =  245.321,  Max =  271.654
+Point Count by Classification Code (semantic_id):
+  - Code 0 (Understory): 12,345 points
+  - Code 1 (Terrain): 55,555 points
+  - Code 2 (Leaf): 210,000 points
+  - Code 3 (Wood): 107,502 points
+--- End of Summary ---
+
+Error Handling & Edge Cases
+---------------------------
+- Missing file: warns and returns.
+- Missing semantic_id: falls back to classification.
+- Missing LAZ decompressor: prints clear installation instructions.
+- Unexpected exceptions are caught and displayed.
+
+Performance Notes
+-----------------
+- Reads entire file into memory; acceptable for modest point clouds (<~50M points). For very large files a streaming or chunked approach would be needed.
+
+Next Step (Stage 2 linkage)
+---------------------------
+Stage 2 consumes similar LAS/LAZ input but extracts per-tree structural metrics and trains a classifier.
+
+Suggested Enhancements (Future)
+-------------------------------
+- Add optional JSON output (--json flag).
+- Support command-line argument for file path.
+- Add timing statistics.

@@ -1,0 +1,140 @@
+STAGE 3 DOCUMENTATION - Full-Stack Integration (Backend API + WebSocket + 3D Viewer)
+====================================================================================
+
+Scope
+-----
+Provide an interactive full-stack application that:
+1. Serves REST endpoints for LiDAR metadata and point retrieval.
+2. Streams incremental tree classification metrics via WebSocket (Socket.IO).
+3. Renders a 3D point cloud in a React/Three.js frontend with raw vs classified color toggles.
+
+Backend
+-------
+File: backend/app.py
+Frameworks: Flask, Flask-CORS, Flask-SocketIO, laspy, numpy
+
+Key Endpoints
+-------------
+GET /api/health
+  Returns {"status": "ok"}
+
+GET /api/pointcloud/meta?file=<optional>
+  Returns JSON with: file, point_count, tree_count_estimate, bounds, species_distribution.
+
+GET /api/pointcloud/points?limit=50000&offset=0&debug=1
+  Returns a batch of point data (x,y,z,z_norm,species_id) with pagination fields.
+  debug=1 adds diagnostic metadata.
+
+WebSocket Namespace /ws (Socket.IO)
+----------------------------------
+Event: start_stream {"file": optional_path}
+  Starts background thread iterating tree IDs, computing metrics, emitting:
+    tree_classification: {tree_id, species_id, metrics...}
+Event: stop_stream
+  Signals thread to stop.
+Event: stream_complete
+  Emitted after finishing all trees.
+
+Classification Streaming Logic
+------------------------------
+- Reuses Stage 2 helpers (normalize_heights, calculate_tree_metrics, _get_tree_ids, _get_species_id_array).
+- Each tree emits a metrics payload with a small artificial delay (50 ms) to simulate real-time flow.
+
+Caching
+-------
+- LAS file cached in-memory (_LAS_CACHE) after first load to avoid re-reading for each endpoint.
+
+Error Handling Improvements
+---------------------------
+- Points endpoint now guards against ScaledArrayView .astype misuse (uses np.asarray conversion).
+- Debug logging enabled with ?debug=1 (prints lengths, slice bounds, mismatch corrections).
+- Regenerates normalization if size mismatch detected.
+
+Frontend
+--------
+File: frontend/src/App.js
+Tech: React + Three.js + socket.io-client + dynamic import for OrbitControls.
+
+Main Features
+-------------
+- Sidebar includes file name, total points, estimated tree count, toggle for classification color.
+- Fetches metadata then initial point batch (default limit ~25k configurable in code).
+- Renders points with:
+  Raw mode: height-based HSL gradient (blue-green to yellow/red style)
+  Classified mode: fixed species palette (Spruce, Pine, Birch, Other).
+- Recenters and normalizes point cloud around origin; auto-fits camera based on bounding radius.
+- Displays streaming status; logs incoming tree metrics to console.
+- Defensive cleanup for StrictMode (avoids removeChild / double unmount errors).
+
+Color Mapping (species)
+-----------------------
+1 -> #2e8b57 (Spruce)
+2 -> #228b22 (Pine)
+3 -> #deb887 (Birch)
+4 -> #808080 (Other)
+0 -> #cccccc (Unknown)
+
+Run Instructions
+----------------
+Backend:
+  python -m venv venv
+  venv\\Scripts\\Activate.ps1
+  pip install -r backend/requirements.txt
+  python backend/app.py --file D:\\Boreal3D\\MediumPlot34\\ULS.laz
+
+Frontend:
+  cd frontend
+  npm install
+  npm start
+(Optionally set REACT_APP_BACKEND if backend not on default: $env:REACT_APP_BACKEND='http://localhost:5000')
+
+Frontend Architecture Notes
+---------------------------
+- PointCloudViewer component encapsulates Three.js scene; uses ref-based imperative setup.
+- Auto-fit computes bounding box (min/max) and adjusts camera position & clipping planes.
+- Rebuilds geometry when classification toggle or point set changes; disposes previous resources.
+
+Performance Considerations
+--------------------------
+- JSON payload of 25k points is ~ moderate size; for bigger clouds implement paging or streaming.
+- Could move to binary transfer (Float32Array via base64 or ArrayBuffer) for large scenes.
+- Dynamic downsampling (e.g., random stride) recommended beyond ~1M points.
+
+Security / CORS
+---------------
+- CORS open for all origins (development convenience). Restrict in production.
+
+Planned / Suggested Enhancements
+--------------------------------
+1. Legend overlay for species colors.
+2. Tree highlight on receiving tree_classification (store bounding box & blink).
+3. Progressive loading: fetch additional pages while user explores.
+4. Compression: enable gzip / brotli for point JSON.
+5. Binary endpoint: /api/pointcloud/points.bin returning packed floats.
+6. Interactive selection (Stage 4 path): rectangle brush -> send bounds to backend -> recompute metrics for points inside.
+7. Model persistence: Save trained RandomForest and serve predictions on demand.
+8. WebSocket room support to handle multiple simultaneous clients/files.
+
+Known Limitations
+-----------------
+- Single LAS cached; switching files requires restart or code to invalidate cache.
+- No authentication or rate limiting.
+- No spatial indexing (all points received then rendered). KD-tree or octree could optimize LOD.
+
+Troubleshooting
+---------------
+Blank viewer: ensure /api/pointcloud/points returns data (check Network tab, or call with debug=1).
+HTTP 500 with ScaledArrayView: fixed by conversion helper in app.py _to_float_list.
+No LAZ backend: install laspy extras (see Stage 1 doc).
+Slow render: reduce initial limit or implement random sampling.
+
+Data Flow Diagram (text)
+------------------------
+[LAS/LAZ file] -> laspy.read -> normalization -> features (on demand) -> REST (/meta, /points) -> React fetch
+                                                          \-> per-tree metrics loop -> Socket.IO -> React stream
+
+Version Tracking
+----------------
+This Stage 3 implementation corresponds to initial full-stack integration before Stage 4 interactive or deep learning extensions.
+
+End of Stage 3 Documentation

@@ -1,0 +1,118 @@
+STAGE 2 DOCUMENTATION - Feature Extraction & Species Classification
+===================================================================
+
+Goal
+----
+Extract structural & statistical features per tree from the point cloud and train a Random Forest classifier to distinguish species (actual or synthesized).
+
+Script
+------
+File: backend/stage_2.py
+Entry point: train_species_classifier(...)
+CLI: python backend\stage_2.py --file <path> [--test-size 0.3] [--random-seed 42] [--auto-locate]
+
+Pipeline Overview
+-----------------
+1. Load LAS/LAZ file (with automatic LAZ decompression if backend installed).
+2. Normalize heights (z above ground) using:
+   a. Prefer semantic_id == 1 (terrain) or classification == 2 (ground).
+   b. Fallback coarse grid min surface if ground classes absent.
+3. Determine tree segmentation:
+   a. Prefer instance_id > 0 (dataset-provided tree segmentation).
+   b. Fallback DBSCAN spatial clustering if instance_id missing.
+4. Species labels:
+   a. Use species_id if present.
+   b. Otherwise synthesize species by z quantiles into 3 classes (1,2,3) to allow model training.
+5. Feature extraction per tree (skip trees with <4 points; need enough geometry):
+   - Height metrics: max, mean, std, p25, p50, p75, p90 (of normalized heights)
+   - Crown 2D area (Convex Hull on XY)
+   - Crown 3D volume (Convex Hull 3D) with exception fallback
+   - Point count
+   - Point planar density (count / crown_area)
+   - Mean crown radius & slenderness ratio (height / (2 * mean_radius))
+   - Upper canopy fraction (points above 70% of tree height)
+6. Assemble feature DataFrame; warn if low tree count (< min_trees default 10).
+7. Train RandomForestClassifier (n_estimators=200, oob_score=True, n_jobs=-1) with stratified split.
+8. Output accuracy, OOB score, classification report, and feature importances.
+9. Return dictionary with results for potential reuse (Stage 3 or persistence).
+
+Key Functions
+-------------
+normalize_heights(las_data)
+calculate_tree_metrics(tree_points)
+_get_tree_ids(las)             # private helper (instance_id or DBSCAN)
+_get_species_id_array(las)     # real or synthetic label array
+
+Resilience & Fallbacks
+----------------------
+- Ground classification missing -> coarse grid min surface.
+- No instance_id -> DBSCAN clustering (eps heuristic: 1% of max XY span, min_samples=20).
+- No species_id -> synthetic labels by height tertiles.
+- Regenerates normalization if mismatch detected.
+
+CLI Arguments
+-------------
+--file / -f        Path to LAS/LAZ (required)
+--test-size        Fraction for test split (default 0.3)
+--random-seed      Reproducibility (default 42)
+--auto-locate      Attempt recursive search if file path not found
+
+Example Usage
+-------------
+python backend\stage_2.py --file D:\\Boreal3D\\MediumPlot34\\ULS.laz --test-size 0.25
+
+Outputs (console)
+-----------------
+Reading file: ...
+Normalizing point cloud heights...
+Height normalization complete.
+Extracting per-tree metrics...
+Extracted features for N trees.
+Sample of extracted features: (head of DataFrame)
+Accuracy: 0.87
+Out-of-Bag (OOB) Score: 0.85
+Classification Report:
+  precision / recall / f1 per species
+Feature Importances:
+  Sorted list of top feature contributions.
+
+Dependencies
+------------
+laspy[lazrs,laszip]
+numpy, pandas, scipy (ConvexHull, griddata)
+scikit-learn
+
+Performance Considerations
+--------------------------
+- ConvexHull is O(n log n) per tree; for very dense trees you may downsample before hull.
+- DBSCAN fallback can be expensive on very large clouds; consider spatial indexing if scaling up.
+- Present pipeline loads whole file; for huge datasets consider tiling or streaming.
+
+Edge Cases Handled
+------------------
+- Trees with <4 points -> skipped.
+- Zero or single class label -> aborts training with message.
+- Very sparse ground points -> coarse grid fallback.
+
+Extension Ideas (Stage 4 or future)
+-----------------------------------
+- Persist model (pickle) for API inference.
+- Replace DBSCAN with voxel-based connected component segmentation.
+- Add voxel height profile features (entropy, skewness).
+- Integrate deep learning (PointNet / KPConv) for end-to-end segmentation.
+
+Return Object Structure (from train_species_classifier)
+------------------------------------------------------
+{
+  'features': DataFrame,
+  'model': sklearn Pipeline,
+  'importances': Series,
+  'accuracy': float,
+  'oob_score': float | None
+}
+
+Troubleshooting
+---------------
+- No LazBackend selected: install via pip/conda (see Stage 1 doc).
+- Accuracy very low: verify species labels are meaningful; if synthetic, consider better heuristic.
+- Memory pressure: reduce feature extraction by sampling points per tree.
